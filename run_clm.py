@@ -48,7 +48,7 @@ from transformers import (CONFIG_MAPPING, MODEL_MAPPING, AutoConfig,
                           SchedulerType, default_data_collator, get_scheduler)
 from transformers.utils.versions import require_version
 
-from data.data_loader import get_data_loader
+from data.dataset_loader import get_data_loader
 from utils import colo_memory_cap
 
 # require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
@@ -339,7 +339,7 @@ def main():
     total_batch_size = args.per_device_train_batch_size * gpc.get_world_size(ParallelMode.DATA)
 
     logger.info("***** Running training *****")
-    # logger.info(f"  Num examples = {}")
+    logger.info(f"  Num examples = {len(train_dataloader)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
@@ -375,7 +375,7 @@ def main():
 
             logger.info(f"step {completed_steps}: train_loss: {loss.item()}", ranks=[0])
 
-            if is_main_process and completed_steps != 0 and completed_steps % 5000 == 0:
+            if is_main_process and completed_steps != 0 and completed_steps % 2500 == 0:
                 model_state = model.state_dict()
 
                 ckpt_file_path = os.path.join(args.output_dir, f'weights_{completed_steps}.pth')

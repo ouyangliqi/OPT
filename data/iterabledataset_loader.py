@@ -100,7 +100,7 @@ class JsonDataset(torch.utils.data.IterableDataset):
 
     def __getitem__(self, line):
         input_sample = [
-            re.sub(r"\\u.{4}", "", cont) for cont in json.loads(line)[self.field]
+            cont for cont in json.loads(line)[self.field]
         ]
         input_sample = END_OF_TEXT_TOKEN.join([i for i in input_sample if len(i) > 1]) + END_OF_TEXT_TOKEN
 

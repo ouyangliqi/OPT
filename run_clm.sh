@@ -1,4 +1,4 @@
-export BS=16
+export BS=20
 export MEMCAP=0
 export MODEL="6.7b"
 export GPUNUM=4
@@ -12,7 +12,8 @@ colossalai run --nproc_per_node ${GPUNUM} \
     --master_port 29500 \
     run_clm.py \
     --weight_decay 0.1 \
-    --learning_rate 1.2e-4 \
+    --num_warmup_steps 16000 \
+    --learning_rate 1.2e-5 \
     --model_name_or_path facebook/opt-${MODEL} \
     --output_dir ${PWD} \
     --mem_cap ${MEMCAP} \
