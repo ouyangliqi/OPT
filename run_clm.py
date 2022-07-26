@@ -36,7 +36,8 @@ from colossalai.context import ParallelMode
 from colossalai.core import global_context as gpc
 from colossalai.logging import get_dist_logger
 from colossalai.nn.optimizer import HybridAdam
-from colossalai.utils import get_current_device, get_dataloader
+from colossalai.utils import (get_current_device, get_dataloader,
+                              load_checkpoint, save_checkpoint)
 from colossalai.zero.init_ctx import ZeroInitContext
 from colossalai.zero.shard_utils import TensorShardStrategy
 from titans.utils import barrier_context
@@ -44,8 +45,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import (CONFIG_MAPPING, MODEL_MAPPING, AutoConfig,
-                          AutoTokenizer, GPT2Tokenizer, OPTForCausalLM,
-                          SchedulerType, default_data_collator, get_scheduler)
+                          GPT2Tokenizer, OPTForCausalLM,
+                          PreTrainedTokenizerFast, SchedulerType,
+                          default_data_collator, get_scheduler)
 from transformers.utils.versions import require_version
 
 from data.dataset_loader import get_data_loader
@@ -76,14 +78,12 @@ def parse_args():
         default=None,
         help="The configuration name of the dataset to use (via the datasets library).",
     )
-    parser.add_argument("--train_file",
-                        type=str,
-                        default=None,
-                        help="A csv or a json file containing the training data.")
-    parser.add_argument("--validation_file",
-                        type=str,
-                        default=None,
-                        help="A csv or a json file containing the validation data.")
+    parser.add_argument(
+        "--train_file", type=str, default=None, help="A csv or a json file containing the training data."
+    )
+    parser.add_argument(
+        "--validation_file", type=str, default=None, help="A csv or a json file containing the validation data."
+    )
     parser.add_argument(
         "--validation_split_percentage",
         default=5,
@@ -139,10 +139,9 @@ def parse_args():
         help="The scheduler type to use.",
         choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
     )
-    parser.add_argument("--num_warmup_steps",
-                        type=int,
-                        default=0,
-                        help="Number of steps for the warmup in the lr scheduler.")
+    parser.add_argument(
+        "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
+    )
     parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
     parser.add_argument(
@@ -156,9 +155,11 @@ def parse_args():
         "--block_size",
         type=int,
         default=None,
-        help=("Optional input sequence length after tokenization. The training dataset will be truncated in block of"
-              " this size for training. Default to the model max input length for single sentence inputs (take into"
-              " account special tokens)."),
+        help=(
+            "Optional input sequence length after tokenization. The training dataset will be truncated in block of"
+            " this size for training. Default to the model max input length for single sentence inputs (take into"
+            " account special tokens)."
+        ),
     )
     parser.add_argument(
         "--preprocessing_num_workers",
@@ -166,17 +167,16 @@ def parse_args():
         default=None,
         help="The number of processes to use for the preprocessing.",
     )
-    parser.add_argument("--overwrite_cache",
-                        type=bool,
-                        default=False,
-                        help="Overwrite the cached training and evaluation sets")
-    parser.add_argument("--no_keep_linebreaks",
-                        action="store_true",
-                        help="Do not keep line breaks when using TXT files.")
+    parser.add_argument(
+        "--overwrite_cache", type=bool, default=False, help="Overwrite the cached training and evaluation sets"
+    )
+    parser.add_argument(
+        "--no_keep_linebreaks", action="store_true", help="Do not keep line breaks when using TXT files."
+    )
     parser.add_argument("--push_to_hub", action="store_true", help="Whether or not to push the model to the Hub.")
-    parser.add_argument("--hub_model_id",
-                        type=str,
-                        help="The name of the repository to keep in sync with the local `output_dir`.")
+    parser.add_argument(
+        "--hub_model_id", type=str, help="The name of the repository to keep in sync with the local `output_dir`."
+    )
     parser.add_argument("--hub_token", type=str, help="The token to use to push to the Model Hub.")
     parser.add_argument(
         "--checkpointing_steps",
@@ -199,27 +199,15 @@ def parse_args():
         "--report_to",
         type=str,
         default="all",
-        help=('The integration to report the results and logs to. Supported platforms are `"tensorboard"`,'
-              ' `"wandb"` and `"comet_ml"`. Use `"all"` (default) to report to all integrations.'
-              "Only applicable when `--with_tracking` is passed."),
+        help=(
+            'The integration to report the results and logs to. Supported platforms are `"tensorboard"`,'
+            ' `"wandb"` and `"comet_ml"`. Use `"all"` (default) to report to all integrations.'
+            "Only applicable when `--with_tracking` is passed."
+        ),
     )
 
     parser.add_argument("--mem_cap", type=int, default=0, help="use mem cap")
     args = parser.parse_args()
-
-    # # Sanity checks
-    # if args.dataset_name is None and args.train_file is None and args.validation_file is None:
-    #     raise ValueError("Need either a dataset name or a training/validation file.")
-    # else:
-    #     if args.train_file is not None:
-    #         extension = args.train_file.split(".")[-1]
-    #         assert extension in ["csv", "json", "txt"], "`train_file` should be a csv, json or txt file."
-    #     if args.validation_file is not None:
-    #         extension = args.validation_file.split(".")[-1]
-    #         assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, json or txt file."
-
-    # if args.push_to_hub:
-    #     assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
 
     return args
 
@@ -246,9 +234,7 @@ def main():
             os.makedirs(args.output_dir, exist_ok=True)
 
     if is_main_process:
-        tensorboard_logdir = os.path.join(
-            "tb_logs", time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-        )
+        tensorboard_logdir = os.path.join("tb_logs", time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime()))
         os.makedirs(tensorboard_logdir, exist_ok=True)
         tb_writer = SummaryWriter(log_dir=tensorboard_logdir)
 
@@ -267,38 +253,45 @@ def main():
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
     # Load pretrained model and tokenizer
-    #
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file="./tokenizer/gpt_bpe.json")
+
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     if args.config_name:
-        config = AutoConfig.from_pretrained(args.config_name)
+        config = AutoConfig.from_pretrained(args.config_name, vocab_size=len(tokenizer), n_ctx=1024, eos_token_id=1)
     elif args.model_name_or_path:
-        config = AutoConfig.from_pretrained(args.model_name_or_path)
+        config = AutoConfig.from_pretrained(args.model_name_or_path, n_ctx=1024, eos_token_id=1)
     else:
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
     logger.info("Model config is created")
-
 
     # build model
     shard_strategy = TensorShardStrategy()
     with ZeroInitContext(target_device=get_current_device(), shard_strategy=shard_strategy, shard_param=True):
         model = OPTForCausalLM(config=config)
         model.config.pad_token_id = 0
-        model.config.bos_token_id = 1
         model.config.eos_token_id = 1
+
+        if not args.resume_from_checkpoint:
+            load_checkpoint(os.path.join(args.resume_from_checkpoint, "model_weights.pt"), model)
+            logger.info("Loaded model weights from checkpoint")
 
         # enable graident checkpointing
         model.gradient_checkpointing_enable()
+        model.resize_token_embeddings(len(tokenizer))
+
     logger.info(f'{model.__class__.__name__} is created')
 
     # Preprocessing the datasets.
 
     # DataLoaders creation:
-    train_dataloader = get_data_loader(batch_size=args.per_device_train_batch_size,
-                                       sequence_length=1024,
-                                       device=get_current_device(),
-                                       data_type=torch.long)
+    train_dataloader = get_data_loader(
+        batch_size=args.per_device_train_batch_size,
+        sequence_length=1024,
+        device=get_current_device(),
+        data_type=torch.long,
+    )
 
     logger.info("Dataloaders are created")
 
@@ -328,9 +321,22 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    engine, train_dataloader, _, lr_scheduler = colossalai.initialize(model, optimizer, None,
-                                                                                    train_dataloader, None,
-                                                                                    lr_scheduler)
+    engine, train_dataloader, _, lr_scheduler = colossalai.initialize(
+        model, optimizer, None, train_dataloader, None, lr_scheduler
+    )
+
+    # if resume_from_checkpoint is not None, load optimizer and scheduler state_dict from the checkpoint.
+    if args.resume_from_checkpoint is not None:
+        optimizer_checkpoint = torch.load(
+            os.path.join(args.resume_from_checkpoint, f"optimizer_weights_{gpc.get_local_rank(ParallelMode.DATA)}.pt"),
+            map_location=None
+        )
+
+        engine.optimizer.load_state_dict(optimizer_checkpoint["optimizer"])
+        lr_scheduler.load_state_dict(optimizer_checkpoint["lr_scheduler"])
+
+        logger.info(f"Loaded optimizer state_dict from checkpoint")
+        del optimizer_checkpoint
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = 100000
@@ -355,7 +361,17 @@ def main():
 
         progress = tqdm(train_dataloader, disable=not is_main_process)
 
+        if args.resume_from_checkpoint is not None:
+            starting_step = int(args.resume_from_checkpoint.split("_")[-1])
+            logger.info("Startd from step {}".format(starting_step))
+
         for batch in progress:
+            if epoch == 0 and args.resume_from_checkpoint is not None and completed_steps < starting_step:
+                completed_steps += 1
+                continue
+            if epoch == 0 and completed_steps == starting_step:
+                logger.info(f"Resumed from step {starting_step}")
+
             torch.cuda.empty_cache()
 
             batch = {k: v.cuda() for k, v in batch.items()}
@@ -375,22 +391,28 @@ def main():
 
             logger.info(f"step {completed_steps}: train_loss: {loss.item()}", ranks=[0])
 
-            if is_main_process and completed_steps != 0 and completed_steps % 2500 == 0:
-                model_state = model.state_dict()
+            if completed_steps != 0 and completed_steps % 10000 == 0:
+                ckpt_dir = os.path.join(args.output_dir, f'weights_{completed_steps}')
+                os.makedirs(ckpt_dir, exist_ok=True)
 
-                ckpt_file_path = os.path.join(args.output_dir, f'weights_{completed_steps}.pth')
-                ckpt = {'model': model_state}
-                torch.save(ckpt, ckpt_file_path)
+                ckpt_file_path = os.path.join(ckpt_dir, f'model_weights.pt')
+
+                save_checkpoint(ckpt_file_path, completed_steps, engine.model)
+
+                others = {'optimizer': engine.optimizer.state_dict(), 'lr_scheduler': lr_scheduler.state_dict()}
+                torch.save(
+                    others, os.path.join(ckpt_dir, f'optimizer_weights_{gpc.get_local_rank(ParallelMode.DATA)}.pt')
+                )
 
         logger.info(f"epoch: {epoch} finished")
 
     if args.output_dir is not None:
-        model_state = model.state_dict()
+        ckpt_dir = os.path.join(args.output_dir, f'weights_{completed_steps}')
+        os.makedirs(ckpt_dir, exist_ok=True)
 
-        if is_main_process:
-            ckpt_file_path = os.path.join(args.output_dir, 'weights_finial.pth')
-            ckpt = {'model': model_state}
-            torch.save(ckpt, ckpt_file_path)
+        ckpt_file_path = os.path.join(ckpt_dir, f'model_weights.pt')
+
+        save_checkpoint(ckpt_file_path, completed_steps, engine.model)
 
 
 if __name__ == "__main__":
