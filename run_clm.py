@@ -260,7 +260,7 @@ def main():
     if args.config_name:
         config = AutoConfig.from_pretrained(args.config_name, vocab_size=len(tokenizer), n_ctx=1024, eos_token_id=1)
     elif args.model_name_or_path:
-        config = AutoConfig.from_pretrained(args.model_name_or_path, n_ctx=1024, eos_token_id=1)
+        config = AutoConfig.from_pretrained(args.model_name_or_path, vocab_size=len(tokenizer), n_ctx=1024, eos_token_id=1)
     else:
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
@@ -273,13 +273,13 @@ def main():
         model.config.pad_token_id = 0
         model.config.eos_token_id = 1
 
-        if not args.resume_from_checkpoint:
+        if args.resume_from_checkpoint is not None:
             load_checkpoint(os.path.join(args.resume_from_checkpoint, "model_weights.pt"), model)
             logger.info("Loaded model weights from checkpoint")
 
         # enable graident checkpointing
         model.gradient_checkpointing_enable()
-        model.resize_token_embeddings(len(tokenizer))
+        # model.resize_token_embeddings(len(tokenizer))
 
     logger.info(f'{model.__class__.__name__} is created')
 
@@ -369,7 +369,7 @@ def main():
             if epoch == 0 and args.resume_from_checkpoint is not None and completed_steps < starting_step:
                 completed_steps += 1
                 continue
-            if epoch == 0 and completed_steps == starting_step:
+            if epoch == 0 and args.resume_from_checkpoint is not None and completed_steps == starting_step:
                 logger.info(f"Resumed from step {starting_step}")
 
             torch.cuda.empty_cache()

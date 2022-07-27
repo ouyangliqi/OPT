@@ -40,6 +40,10 @@ def is_contain_chinese(check_str):
             return True
     return False
 
+class IdentitySplitter(object):
+     @staticmethod
+     def tokenize(*text):
+         return text
 
 class Encoder(object):
     def __init__(self, field, length, sentence_splitter):
@@ -86,11 +90,12 @@ class CommonCrawlDataset(torch.utils.data.Dataset):
     Note that only the "text" key is used.
     """
 
-    def __init__(self, path: str, sequence_length, data_type, tokenizer, recache=False):
+    def __init__(self, path: str, sequence_length, field, data_type, tokenizer, recache=False):
         self.path = path
         self.max_len = sequence_length
         self.tokenizer = tokenizer
         self.data_type = data_type
+        self.field = field
 
         self.threadlocal = threading.local()
         # TODO(susan): Fix this fairseq reference. _build_index fails otherwise.
@@ -129,7 +134,7 @@ class CommonCrawlDataset(torch.utils.data.Dataset):
         f = self._get_mmap()
         f.seek(self.offsets[idx])
         item = f.readline().decode("utf-8")
-        item = json.loads(item)['cont']
+        item = json.loads(item)[self.field]
         # TODO(chloe): change into encoder
         item = "".join(item) + END_OF_TEXT_TOKEN
         if self.tokenizer is not None:
@@ -172,7 +177,7 @@ class CommonCrawlDataset(torch.utils.data.Dataset):
                 break
             offsets.append(cur)
             cur += len(line)
-            length.append(len("".join(json.loads(line.decode("utf-8").strip())['cont'])))
+            length.append(len("".join(json.loads(line.decode("utf-8").strip())[self.field])))
         return offsets, length
 
     def __setstate__(self, state):
@@ -228,16 +233,16 @@ def get_data_loader(
     datasets = []
     dataset_length = []
 
-    commoncrawl = "/mnt/cfs/commoncrawl-202*-**-filter/under_all-data.txt"
-    for dir in glob.glob(commoncrawl):
-        datasets.append(CommonCrawlDataset(
-            path=dir, sequence_length=sequence_length, data_type=data_type, tokenizer=tokenizer, recache=True
-        ))
-        dataset_length.extend(datasets[-1].length)
+    # commoncrawl = "/mnt/cfs/commoncrawl-202*-**-filter/under_all-data.txt"
+    # for dir in glob.glob(commoncrawl):
+    #     datasets.append(CommonCrawlDataset(
+    #         path=dir, sequence_length=sequence_length, field="cont", data_type=data_type, tokenizer=tokenizer, recache=True
+    #     ))
+    #     dataset_length.extend(datasets[-1].length)
 
-    zh_wiki = "/mnt/cfs/zh_wiki/zh_wiki-all.txt"
+    zh_wiki = "/mnt/cfs/zh_wiki/zh_wiki_all.txt"
     datasets.append(CommonCrawlDataset(
-        path=zh_wiki, sequence_length=sequence_length, data_type=data_type, tokenizer=tokenizer, recache=True
+        path=zh_wiki, sequence_length=sequence_length, field="text", data_type=data_type, tokenizer=tokenizer, recache=True
     ))
     dataset_length.extend(datasets[-1].length)
 
