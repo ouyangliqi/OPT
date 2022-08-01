@@ -15,6 +15,7 @@ colossalai run --nproc_per_node ${GPUNUM} \
     --weight_decay 0.1 \
     --num_warmup_steps 16000 \
     --learning_rate 1.2e-5 \
+    --resume_from_checkpoint ${PWD}/weights_30 \
     --model_name_or_path facebook/opt-${MODEL} \
     --output_dir ${PWD} \
     --mem_cap ${MEMCAP} \

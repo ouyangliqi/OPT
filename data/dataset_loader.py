@@ -25,6 +25,7 @@ torch.backends.cudnn.benchmark = False
 
 logger = get_dist_logger()
 
+
 def pretrain_tokenize(tokenizer, text):
     token_dict = tokenizer.encode(text)
     return {
@@ -40,10 +41,12 @@ def is_contain_chinese(check_str):
             return True
     return False
 
+
 class IdentitySplitter(object):
      @staticmethod
      def tokenize(*text):
          return text
+
 
 class Encoder(object):
     def __init__(self, field, length, sentence_splitter):
@@ -242,7 +245,7 @@ def get_data_loader(
 
     zh_wiki = "/mnt/cfs/zh_wiki/zh_wiki_all.txt"
     datasets.append(CommonCrawlDataset(
-        path=zh_wiki, sequence_length=sequence_length, field="text", data_type=data_type, tokenizer=tokenizer, recache=True
+        path=zh_wiki, sequence_length=sequence_length, field="text", data_type=data_type, tokenizer=tokenizer, recache=False
     ))
     dataset_length.extend(datasets[-1].length)
 

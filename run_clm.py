@@ -29,6 +29,7 @@ import time
 from itertools import chain
 
 import colossalai
+import numpy as np
 import torch
 import transformers
 from accelerate.utils import set_seed
@@ -57,6 +58,15 @@ from utils import colo_memory_cap
 
 MODEL_CONFIG_CLASSES = list(MODEL_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+
+
+def seed_everything(seed):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
 
 
 def get_time_stamp():
@@ -214,6 +224,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    seed_everything(123)
 
     colossalai.launch_from_torch(config='./colossalai_zero.py')
 
@@ -391,7 +402,7 @@ def main():
 
             logger.info(f"step {completed_steps}: train_loss: {loss.item()}", ranks=[0])
 
-            if completed_steps != 0 and completed_steps % 10000 == 0:
+            if completed_steps != 0 and completed_steps % 30 == 0:
                 ckpt_dir = os.path.join(args.output_dir, f'weights_{completed_steps}')
                 os.makedirs(ckpt_dir, exist_ok=True)
 
