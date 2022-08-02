@@ -6,8 +6,8 @@ from tokenizers import (Tokenizer, decoders, models, normalizers,
 
 
 def common_crawl(dir):
-    commoncrawl = "/mnt/cfs/commoncrawl-202*-**-filter/minhash"
-    dirs = ["/mnt/cfs/commoncrawl-2021-03-filter/minhash"]
+    # commoncrawl = "/mnt/cfs/commoncrawl-202*-**-s3-filter/"
+    # dirs = ["/mnt/cfs/commoncrawl-2021-03-filter/minhash"]
     for file in glob.glob(dir + "/**"):
         f = open(file, "r")
         items = f.readlines()
@@ -51,11 +51,11 @@ def main():
     tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
 
     trainer = trainers.BpeTrainer(vocab_size=25000, special_tokens=[
-                                  "<pad>", "<|endoftext|>"])
+                                  "<pad>", "<|endoftext|>", "<EMAIL>", "<PHONE>"])
 
     weibo_iterator = weibo()
     lccc_iterator = lccc()
-    common_crawl_iterator = [common_crawl("/mnt/cfs/commoncrawl-2021-12-filter/minhash")]
+    common_crawl_iterator = [common_crawl("/mnt/cfs/commoncrawl-2021-12-s3-filter/")]
     tokenizer.train_from_iterator(weibo_iterator, trainer=trainer)
     tokenizer.train_from_iterator(lccc_iterator, trainer=trainer)
     for iter in common_crawl_iterator:
