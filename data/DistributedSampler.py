@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 # adpated from torch.utils.data.DistributedSampler
-
-from asyncio.log import logger
+from cmath import log
+import os
 import math
 import random
 from typing import Iterator, TypeVar
+from colossalai.logging import get_dist_logger
 
 import numpy as np
 import torch
@@ -13,8 +14,10 @@ from colossalai.context.parallel_mode import ParallelMode
 from colossalai.core import global_context as gpc
 from colossalai.registry import DATA_SAMPLERS
 from torch.utils.data import DataLoader, Dataset, Sampler
+from pathlib import Path
 
 T_co = TypeVar('T_co', covariant=True)
+logger = get_dist_logger()
 
 
 class DataParallelSampler(Sampler):
@@ -62,6 +65,7 @@ class DataParallelSampler(Sampler):
 
         self.batches = batches
 
+
     def __iter__(self) -> Iterator[T_co]:
         # if self.shuffle:
         #     # deterministically shuffle based on epoch and seed
@@ -75,15 +79,16 @@ class DataParallelSampler(Sampler):
         #     self.epoch += 1
         # else:
         #     indices = list(range(len(self.dataset)))  # type: ignore[arg-type]
-        indices = list(self.batches)
+        indices = self.batches
 
         if not self.drop_last:
             # add extra samples to make it evenly divisible
+            # TODO(chloe): check if this is correct
             padding_size = self.total_size - len(indices)
             if padding_size <= len(indices):
-                indices += indices[:padding_size]
+                indices = np.append(indices, indices[:padding_size])
             else:
-                indices += (indices * math.ceil(padding_size /
+                indices = np.tile(indices, math.ceil(padding_size /
                             len(indices)))[:padding_size]
         else:
             # remove tail of data to make it evenly divisible.
@@ -144,7 +149,7 @@ def get_dataloader(dataset,
     _kwargs = kwargs.copy()
 
     if add_sampler and gpc.is_initialized(ParallelMode.DATA) and gpc.get_world_size(ParallelMode.DATA) > 1:
-        sampler = DataParallelSampler(dataset, batches, shuffle=shuffle)
+        sampler = DataParallelSampler(dataset, batches, shuffle=shuffle, drop_last=drop_last)
     else:
         sampler = None
     logger.info("*************sampler: {}".format(sampler))

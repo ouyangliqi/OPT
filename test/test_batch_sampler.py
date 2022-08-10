@@ -47,18 +47,22 @@ class JsonlDataset(torch.utils.data.Dataset):
     Note that only the "text" key is used.
     """
 
-    def __init__(self, path: str, tokenizer: Optional[Callable] = None, recache=False):
+    def __init__(self, path: str, field:str, tokenizer: Optional[Callable] = None, recache=False):
         self.path = path
         self.tokenizer = tokenizer
+        self.field = field
 
         self.threadlocal = threading.local()
         # TODO(susan): Fix this fairseq reference. _build_index fails otherwise.
         self.cache = Path(f"{path}.fairseq.idx.npy")
+        self.length_cache = Path(f"{path}.fairseq.length.npy")
         if self.cache.exists() and not recache:
             self.offsets = np.load(self.cache)
+            self.length = np.load(self.length_cache)
         else:
             self.offsets, self.length = self._build_index(path)
             np.save(self.cache, self.offsets)
+            np.save(self.length_cache, self.length)
         # print(f'n offsets: {len(self.offsets)}')
 
         # self.length = [self.offsets[i + 1] - self.offsets[i] for i in range(0, len(self.offsets))]
@@ -84,11 +88,10 @@ class JsonlDataset(torch.utils.data.Dataset):
             raise IndexError
         f = self._get_mmap()
         f.seek(self.offsets[idx])
-        item = f.readline().decode("utf-8")
+        item = f.readline().strip().decode("utf-8")
         item = json.loads(item)['cont']
         # TODO(chloe): change into encoder
-
-        item = "<|endoftext|>".join(item)
+        item = "".join(item)
         if self.tokenizer is not None:
             item = self.tokenizer(item)
         return item
@@ -137,7 +140,7 @@ class JsonlDataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     """Usage:
-    python metaseq/data/jsonl_dataset.py "flan_streaming/valid/00/*.jsonl"
+    python -m torch.distributed.launch --nproc_per_node=2 test_batch_sampler.py
     """
     # parser = argparse.ArgumentParser(
     #     description="Precompute index file from JSONL files"
@@ -164,7 +167,7 @@ if __name__ == "__main__":
 
     for f in tqdm(list(glob("./testdata/**.txt"))):
         print(f)
-        datasets.append(JsonlDataset(f, recache=True))
+        datasets.append(JsonlDataset(f, field="cont", recache=True))
         dataset_length.extend(datasets[-1].length)
 
     dataset = torch.utils.data.ConcatDataset(datasets)
@@ -175,7 +178,7 @@ if __name__ == "__main__":
     print(f"dataset_length: {dataset_length}")
     batches = np.array(dataset_length).argsort()[::-1]
     print(batches)
-    dataloader = get_dataloader(dataset, batches, shuffle=False, drop_last=False, batch_size=batch_size)
+    dataloader = get_dataloader(dataset, batches, shuffle=False, drop_last=True, batch_size=batch_size)
 
     local_rank = torch.distributed.get_rank()
 
@@ -191,3 +194,4 @@ if __name__ == "__main__":
         epoch+=1
 
 
+# python -m torch.distributed.launch --nproc_per_node=2 test_batch_sampler.py

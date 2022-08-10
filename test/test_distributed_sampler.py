@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 # adpated from torch.utils.data.DistributedSampler
-
+import os
 import math
 import random
 from typing import Iterator, TypeVar
@@ -12,6 +12,7 @@ from colossalai.context.parallel_mode import ParallelMode
 from colossalai.core import global_context as gpc
 from colossalai.registry import DATA_SAMPLERS
 from torch.utils.data import DataLoader, Dataset, Sampler
+from pathlib import Path
 
 T_co = TypeVar('T_co', covariant=True)
 
@@ -61,6 +62,14 @@ class DataParallelSampler(Sampler):
 
         self.batches = batches
 
+        # self.indices_path = Path(f"{os.path.dirname(__file__)}/data.indices.npy")
+        # recache = True
+        # if os.path.exists(self.indices_path) and not recache:
+        #     self.indices = np.load(self.indices_path, mmap_mode="r")
+        # else:
+        #     self.indices = self.get_indices(batches)
+        #     np.save(self.indices_path, self.indices)
+
     def __iter__(self) -> Iterator[T_co]:
         # if self.shuffle:
         #     # deterministically shuffle based on epoch and seed
@@ -74,15 +83,16 @@ class DataParallelSampler(Sampler):
         #     self.epoch += 1
         # else:
         #     indices = list(range(len(self.dataset)))  # type: ignore[arg-type]
-        indices = list(self.batches)
+
+        indices = self.batches
 
         if not self.drop_last:
             # add extra samples to make it evenly divisible
             padding_size = self.total_size - len(indices)
             if padding_size <= len(indices):
-                indices += indices[:padding_size]
+                indices = np.append(indices, indices[:padding_size])
             else:
-                indices += (indices * math.ceil(padding_size /
+                indices = np.tile(indices, math.ceil(padding_size /
                             len(indices)))[:padding_size]
         else:
             # remove tail of data to make it evenly divisible.

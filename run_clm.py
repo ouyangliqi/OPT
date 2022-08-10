@@ -22,6 +22,7 @@ https://huggingface.co/models?filter=text-generation
 """
 # You can also adapt this script on your own causal language modeling task. Pointers for this are left as comments.
 
+from curses import use_default_colors
 import math
 import os
 import random
@@ -46,9 +47,10 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 from transformers import (CONFIG_MAPPING, MODEL_MAPPING, AutoConfig,
-                          GPT2Tokenizer, OPTForCausalLM,
+                          GPT2Config, OPTForCausalLM, GPT2LMHeadModel,
                           PreTrainedTokenizerFast, SchedulerType,
                           default_data_collator, get_scheduler)
+from transformers import AutoTokenizer
 from transformers.utils.versions import require_version
 
 from data.dataset_loader import get_data_loader
@@ -72,6 +74,23 @@ def seed_everything(seed):
 def get_time_stamp():
     torch.cuda.synchronize()
     return time.time()
+
+
+def is_param_registered(param) -> bool:
+    assert isinstance(param, torch.nn.Parameter)
+    return hasattr(param, "ps_attr")
+
+
+def get_ps_model_size(model):
+    numel = 0
+    param_cnt = 0
+    for _, param in model.named_parameters(recurse=True):
+        if is_param_registered(param):
+            numel += param.ps_attr.numel
+        else:
+            numel += param.numel()
+        param_cnt += 1
+    return numel, param_cnt
 
 
 def parse_args():
@@ -264,14 +283,15 @@ def main():
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
     # Load pretrained model and tokenizer
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file="./tokenizer/gpt_bpe.json")
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese", use_fast=False)
+    tokenizer.add_tokens(["<EMAIL>", "<PHONE>"], special_tokens=True)
 
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
     if args.config_name:
-        config = AutoConfig.from_pretrained(args.config_name, vocab_size=len(tokenizer), n_ctx=1024, eos_token_id=1)
+        config = AutoConfig.from_pretrained(args.config_name, vocab_size=len(tokenizer), n_ctx=2048)
     elif args.model_name_or_path:
-        config = AutoConfig.from_pretrained(args.model_name_or_path, vocab_size=len(tokenizer), n_ctx=1024, eos_token_id=1)
+        config = AutoConfig.from_pretrained(args.model_name_or_path, vocab_size=len(tokenizer), n_ctx=2048)
     else:
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
@@ -282,7 +302,7 @@ def main():
     with ZeroInitContext(target_device=get_current_device(), shard_strategy=shard_strategy, shard_param=True):
         model = OPTForCausalLM(config=config)
         model.config.pad_token_id = 0
-        model.config.eos_token_id = 1
+        # model.config.eos_token_id = 0
 
         if args.resume_from_checkpoint is not None:
             load_checkpoint(os.path.join(args.resume_from_checkpoint, "model_weights.pt"), model)
@@ -294,12 +314,13 @@ def main():
 
     logger.info(f'{model.__class__.__name__} is created')
 
-    # Preprocessing the datasets.
+    model_numel, model_num_param = get_ps_model_size(model)
+    logger.info(f"Model size: {model_numel / 1e9}B, total parameters: {model_num_param}")
 
     # DataLoaders creation:
     train_dataloader = get_data_loader(
         batch_size=args.per_device_train_batch_size,
-        sequence_length=1024,
+        sequence_length=2048,
         device=get_current_device(),
         data_type=torch.long,
     )
@@ -369,7 +390,7 @@ def main():
 
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
-
+        logger.info("start progress")
         progress = tqdm(train_dataloader, disable=not is_main_process)
 
         if args.resume_from_checkpoint is not None:
@@ -383,6 +404,8 @@ def main():
             if epoch == 0 and args.resume_from_checkpoint is not None and completed_steps == starting_step:
                 logger.info(f"Resumed from step {starting_step}")
 
+            logger.info("batch size: {}".format(batch['input_ids'].shape))
+
             torch.cuda.empty_cache()
 
             batch = {k: v.cuda() for k, v in batch.items()}
@@ -395,6 +418,7 @@ def main():
             engine.zero_grad()
             completed_steps += 1
 
+
             if is_main_process:
                 tb_writer.add_scalar("train/loss", loss.item(), completed_steps)
                 for _, lr in enumerate(lr_scheduler.get_lr()):
@@ -402,7 +426,7 @@ def main():
 
             logger.info(f"step {completed_steps}: train_loss: {loss.item()}", ranks=[0])
 
-            if completed_steps != 0 and completed_steps % 30 == 0:
+            if completed_steps != 0 and completed_steps % 10000 == 0:
                 ckpt_dir = os.path.join(args.output_dir, f'weights_{completed_steps}')
                 os.makedirs(ckpt_dir, exist_ok=True)
 

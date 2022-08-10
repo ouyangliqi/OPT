@@ -14,25 +14,23 @@ from tokenizers import Tokenizer
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 from tqdm import tqdm
+from transformers import AutoTokenizer
 
 from .DistributedSampler import get_dataloader
 from .SPECIAL_TOKENS import END_OF_TEXT_TOKEN, EOD_ID, PAD_ID, PAD_TOKEN
-
-tokenizer = Tokenizer.from_file(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "./tokenizer/gpt_bpe.json"))
 
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 logger = get_dist_logger()
 
+data_length_cache = Path(f"{os.path.dirname(__file__)}/data.length.npy")
+dataset_length_recache = False
+
 
 def pretrain_tokenize(tokenizer, text):
-    token_dict = tokenizer.encode(text)
-    return {
-        "input_ids": token_dict.ids,
-        "token_type_ids": token_dict.type_ids,
-        "attention_mask": token_dict.attention_mask,
-    }
+    token_dict = tokenizer(text, add_special_tokens=False, padding=False, truncation=False)
+    return token_dict
 
 
 def is_contain_chinese(check_str):
@@ -53,9 +51,7 @@ class Encoder(object):
         self.field = field
         self.length = length
         self.sentence_splitter = sentence_splitter
-        self.tokenizer = Tokenizer.from_file(
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "./tokenizer/gpt_bpe.json")
-        )
+        self.tokenizer = None
         self.splitter = IdentitySplitter()
 
     def initializer(self):
@@ -71,7 +67,7 @@ class Encoder(object):
             return None, 0
         data = line.strip()
         doc_ids = self.tokenizer.encode(data)
-        doc_ids.append(EOD_ID)
+        # doc_ids.append(EOD_ID)
         # group by length and return list of encoded ids
 
         return doc_ids, len(sum())
@@ -106,7 +102,9 @@ class CommonCrawlDataset(torch.utils.data.Dataset):
         self.length_cache = Path(f"{path}.fairseq.length.npy")
 
         if self.cache.exists() and not recache:
-            self.offsets, self.length = np.load(self.cache), np.load(self.length_cache)
+            self.offsets = np.load(self.cache, mmap_mode="r")
+            if dataset_length_recache:
+                self.length = np.load(self.length_cache, mmap_mode="r")
         else:
             self.offsets, self.length = self._build_index(path)
             np.save(self.cache, self.offsets)
@@ -136,16 +134,16 @@ class CommonCrawlDataset(torch.utils.data.Dataset):
             raise IndexError
         f = self._get_mmap()
         f.seek(self.offsets[idx])
-        item = f.readline().decode("utf-8")
+        item = f.readline().strip().decode("utf-8")
         item = json.loads(item)[self.field]
         # TODO(chloe): change into encoder
-        item = "".join(item) + END_OF_TEXT_TOKEN
+        item = "".join(item)
         if self.tokenizer is not None:
             item = pretrain_tokenize(self.tokenizer, item)
 
         if self.max_len is not None and len(item['input_ids']) > self.max_len:
-            item['input_ids'] = item['input_ids'][: (self.max_len - 1)] + [EOD_ID]
-            item['attention_mask'] = item['attention_mask'][: (self.max_len - 1)] + [0]
+            item['input_ids'] = item['input_ids'][:self.max_len]
+            item['attention_mask'] = item['attention_mask'][:self.max_len]
 
         item["input_ids"] = torch.tensor(
             item["input_ids"], dtype=self.data_type
@@ -236,19 +234,23 @@ def get_data_loader(
     datasets = []
     dataset_length = []
 
-    # commoncrawl = "/mnt/cfs/commoncrawl-202*-**-filter/under_all-data.txt"
-    # for dir in glob.glob(commoncrawl):
-    #     datasets.append(CommonCrawlDataset(
-    #         path=dir, sequence_length=sequence_length, field="cont", data_type=data_type, tokenizer=tokenizer, recache=True
-    #     ))
-    #     dataset_length.extend(datasets[-1].length)
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese", use_fast=False)
+    tokenizer.add_tokens(["<EMAIL>", "<PHONE>"], special_tokens=True)
+
+    commoncrawl = "/mnt/cfs/commoncrawl-all-data/**.txt"
+    for dir in glob.glob(commoncrawl):
+        datasets.append(CommonCrawlDataset(
+            path=dir, sequence_length=sequence_length, field="cont", data_type=data_type, tokenizer=tokenizer, recache=False
+        ))
+        if dataset_length_recache:
+            dataset_length.extend(datasets[-1].length)
 
     zh_wiki = "/mnt/cfs/zh_wiki/zh_wiki_all.txt"
     datasets.append(CommonCrawlDataset(
         path=zh_wiki, sequence_length=sequence_length, field="text", data_type=data_type, tokenizer=tokenizer, recache=False
     ))
-    dataset_length.extend(datasets[-1].length)
-
+    if dataset_length_recache:
+        dataset_length.extend(datasets[-1].length)
 
     # weibo = "/mnt/cfs/weibo_comments/weibocomments_all.txt"
     # datasets.append(
@@ -270,16 +272,27 @@ def get_data_loader(
     logger.info(f"LOADING DATA SPLEND {step_elapse}s")
 
     train_dataset = torch.utils.data.ConcatDataset(datasets)
-    batches = np.array(dataset_length).argsort()
+    # sort dataset_length
+    if data_length_cache.exists() and not dataset_length_recache:
+        logger.info("loading data length")
+        batches = np.load(data_length_cache, mmap_mode="r")
+    else:
+        logger.info("save sorted data length indexs")
+        batches = np.array(dataset_length).argsort()
+        np.save(data_length_cache, batches)
+
+    logger.info("Get dataloader")
     train_loader = get_dataloader(
         train_dataset,
         batches,
+        recache=True,
         shuffle=False,
         drop_last=True,
         batch_size=batch_size,
         collate_fn=collate,
     )
     return train_loader
+
 
 if __name__ == "__main__":
     dataloader = get_data_loader(
