@@ -29,7 +29,7 @@ dataset_length_recache = False
 
 
 def pretrain_tokenize(tokenizer, text):
-    token_dict = tokenizer(text, add_special_tokens=False, padding=False, truncation=False)
+    token_dict = tokenizer(text, add_special_tokens=False, padding=False, truncation=False, return_token_type_ids=False)
     return token_dict
 
 
@@ -237,7 +237,7 @@ def get_data_loader(
     tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese", use_fast=False)
     tokenizer.add_tokens(["<EMAIL>", "<PHONE>"], special_tokens=True)
 
-    commoncrawl = "/mnt/cfs/commoncrawl-all-data/**.txt"
+    commoncrawl = "/mnt/cfs/commoncrawl-mini/**.txt"
     for dir in glob.glob(commoncrawl):
         datasets.append(CommonCrawlDataset(
             path=dir, sequence_length=sequence_length, field="cont", data_type=data_type, tokenizer=tokenizer, recache=False
@@ -267,7 +267,6 @@ def get_data_loader(
     #     ))
     # dataset_length.extend(datasets[-1].length)
 
-
     step_elapse = time.time() - start
     logger.info(f"LOADING DATA SPLEND {step_elapse}s")
 
@@ -285,11 +284,11 @@ def get_data_loader(
     train_loader = get_dataloader(
         train_dataset,
         batches,
-        recache=True,
         shuffle=False,
         drop_last=True,
         batch_size=batch_size,
         collate_fn=collate,
+        # num_workers=2,
     )
     return train_loader
 
