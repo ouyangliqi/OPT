@@ -160,6 +160,7 @@ def parse_args():
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
+    parser.add_argument("--gpu_margin_mem_ratio", type=float, default=0.0, help="Optimizer GPU memory margin ratio.")
     parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs to perform.")
     parser.add_argument(
         "--lr_scheduler_type",
@@ -321,7 +322,6 @@ def main():
     train_dataloader = get_data_loader(
         batch_size=args.per_device_train_batch_size,
         sequence_length=2048,
-        device=get_current_device(),
         data_type=torch.long,
     )
 
@@ -426,7 +426,9 @@ def main():
 
             logger.info(f"step {completed_steps}: train_loss: {loss.item()}", ranks=[0])
 
-            if completed_steps != 0 and completed_steps % 10000 == 0:
+            if completed_steps != 0 and completed_steps % 5000 == 0:
+                torch.cuda.empty_cache()
+
                 ckpt_dir = os.path.join(args.output_dir, f'weights_{completed_steps}')
                 os.makedirs(ckpt_dir, exist_ok=True)
 

@@ -115,7 +115,7 @@ class DataParallelSampler(Sampler):
         self.epoch = epoch
 
 
-def get_dataloader(dataset,
+def build_dataloader(dataset,
                    batches,
                    shuffle=False,
                    seed=1024,

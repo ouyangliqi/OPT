@@ -15,17 +15,19 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
+import logging
 
-from .DistributedSampler import get_dataloader
+from .DistributedSampler import build_dataloader
 from .SPECIAL_TOKENS import END_OF_TEXT_TOKEN, EOD_ID, PAD_ID, PAD_TOKEN
 
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 logger = get_dist_logger()
+logging.getLogger("transformers.tokenization_utils").setLevel(logging.ERROR)
 
 data_length_cache = Path(f"{os.path.dirname(__file__)}/data.length.npy")
-dataset_length_recache = False
+dataset_length_recache = True
 
 
 def pretrain_tokenize(tokenizer, text):
@@ -225,7 +227,6 @@ def collate(features):
 def get_data_loader(
     batch_size,
     sequence_length,
-    device,
     data_type,
 ):
     # TODO(chloe): add cache
@@ -234,7 +235,7 @@ def get_data_loader(
     datasets = []
     dataset_length = []
 
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese", use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese", use_fast=False, do_lower_case=True)
     tokenizer.add_tokens(["<EMAIL>", "<PHONE>"], special_tokens=True)
 
     commoncrawl = "/mnt/cfs/commoncrawl-mini/**.txt"
@@ -252,20 +253,6 @@ def get_data_loader(
     if dataset_length_recache:
         dataset_length.extend(datasets[-1].length)
 
-    # weibo = "/mnt/cfs/weibo_comments/weibocomments_all.txt"
-    # datasets.append(
-    #     ConversationDataset(
-    #         path=weibo, sequence_length=sequence_length, data_type=data_type, tokenizer=tokenizer, recache=False
-    #     ))
-    # dataset_length.extend(datasets[-1].length)
-
-
-    # lccc = "/mnt/cfs/LCCC/lccc_all.txt"
-    # datasets.append(
-    #     ConversationDataset(
-    #         path=lccc, sequence_length=sequence_length, data_type=data_type, tokenizer=tokenizer, recache=False
-    #     ))
-    # dataset_length.extend(datasets[-1].length)
 
     step_elapse = time.time() - start
     logger.info(f"LOADING DATA SPLEND {step_elapse}s")
@@ -281,18 +268,32 @@ def get_data_loader(
         np.save(data_length_cache, batches)
 
     logger.info("Get dataloader")
-    train_loader = get_dataloader(
+    train_loader = build_dataloader(
         train_dataset,
         batches,
         shuffle=False,
         drop_last=True,
         batch_size=batch_size,
         collate_fn=collate,
-        # num_workers=2,
     )
     return train_loader
 
 
 if __name__ == "__main__":
     dataloader = get_data_loader(
-        batch_size=32, sequence_length=128, device="cuda", data_type=torch.long)
+        batch_size=32, sequence_length=128, data_type=torch.long)
+
+
+    # weibo = "/mnt/cfs/weibo_comments/weibocomments_all.txt"
+    # datasets.append(
+    #     ConversationDataset(
+    #         path=weibo, sequence_length=sequence_length, data_type=data_type, tokenizer=tokenizer, recache=False
+    #     ))
+    # dataset_length.extend(datasets[-1].length)
+
+    # lccc = "/mnt/cfs/LCCC/lccc_all.txt"
+    # datasets.append(
+    #     ConversationDataset(
+    #         path=lccc, sequence_length=sequence_length, data_type=data_type, tokenizer=tokenizer, recache=False
+    #     ))
+    # dataset_length.extend(datasets[-1].length)
